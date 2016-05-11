@@ -2,6 +2,7 @@ package main
 
 import (
 	"flag"
+	"fmt"
 	"log"
 	"net/http"
 	"os"
@@ -32,9 +33,12 @@ import (
 // - http://stackoverflow.com/questions/17410841/how-does-user-hz-solve-the-jiffy-scaling-issue
 const userHZ = 100
 
+var version string
+
 var (
-	addr     = flag.String("listen-address", ":9011", "The address to listen on for HTTP requests.")
-	interval = flag.Duration("interval", 1*time.Second, "The interval for polling.")
+	addr       = flag.String("listen-address", ":9011", "The address to listen on for HTTP requests.")
+	interval   = flag.Duration("interval", 1*time.Second, "The interval for polling.")
+	versionFlg = flag.Bool("version", false, "Show version number")
 )
 
 var (
@@ -209,6 +213,12 @@ func init() {
 
 func main() {
 	flag.Parse()
+
+	if *versionFlg {
+		fmt.Fprintf(os.Stderr, "%s version %s\n", os.Args[0], version)
+
+		os.Exit(0)
+	}
 
 	procStat, err := procfs.NewStat()
 	if err != nil {
