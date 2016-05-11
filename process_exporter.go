@@ -6,6 +6,7 @@ import (
 	"log"
 	"net/http"
 	"os"
+	"regexp"
 	"strconv"
 	"strings"
 	"time"
@@ -38,6 +39,7 @@ var version string
 var (
 	addr       = flag.String("listen-address", ":9011", "The address to listen on for HTTP requests.")
 	interval   = flag.Duration("interval", 1*time.Second, "The interval for polling.")
+	filter     = flag.String("filter", "", "Commandline filter")
 	versionFlg = flag.Bool("version", false, "Show version number")
 )
 
@@ -227,6 +229,15 @@ func main() {
 	bootTime := float64(procStat.BootTime)
 	pagesize := os.Getpagesize()
 
+	var filterRegex *regexp.Regexp = nil
+	if filter != nil {
+		re, err := regexp.Compile(*filter)
+		if err != nil {
+			log.Fatal(err)
+		}
+		filterRegex = re
+	}
+
 	go func() {
 		for {
 			procs, err := procfs.AllProcs()
@@ -247,6 +258,12 @@ func main() {
 					continue
 				}
 				sCmdline := strings.Join(cmdline, " ")
+
+				if filterRegex != nil {
+					if !filterRegex.MatchString(sCmdline) {
+						continue
+					}
+				}
 
 				labels := []string{strconv.Itoa(proc.PID), stat.Comm, sCmdline}
 
