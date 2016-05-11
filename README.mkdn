@@ -6,6 +6,10 @@ This is a process information exporter for promehteus.
 
 This app aggregates process information from `/proc/_pid_/stat` and `/proc/_pid_/io`. And export informations.
 
+## Build
+
+    GOOS=linux GOARCH=amd64 go build -v process_exporter.go
+
 ## AUTHORS
 
 Tokuhiro Matsuno
