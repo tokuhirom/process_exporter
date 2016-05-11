@@ -222,21 +222,22 @@ func main() {
 		os.Exit(0)
 	}
 
-	procStat, err := procfs.NewStat()
-	if err != nil {
-		log.Fatal(err)
-	}
-	bootTime := float64(procStat.BootTime)
-	pagesize := os.Getpagesize()
-
 	var filterRegex *regexp.Regexp = nil
 	if filter != nil {
+		log.Printf("Filter: %s\n", *filter)
 		re, err := regexp.Compile(*filter)
 		if err != nil {
 			log.Fatal(err)
 		}
 		filterRegex = re
 	}
+
+	procStat, err := procfs.NewStat()
+	if err != nil {
+		log.Fatal(err)
+	}
+	bootTime := float64(procStat.BootTime)
+	pagesize := os.Getpagesize()
 
 	go func() {
 		for {
