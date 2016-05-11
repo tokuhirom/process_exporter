@@ -249,7 +249,7 @@ func main() {
 			for _, proc := range procs {
 				stat, err := proc.NewStat()
 				if err != nil {
-					log.Print(err)
+					// log.Print(err)
 					continue
 				}
 
