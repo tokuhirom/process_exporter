@@ -6,10 +6,12 @@ import (
 	"log"
 	"net/http"
 	"os"
+	"os/user"
 	"regexp"
 	"strconv"
 	"strings"
 	"sync"
+	"syscall"
 
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/procfs"
@@ -38,6 +40,7 @@ var version string
 
 var (
 	addr       = flag.String("listen-address", ":9011", "The address to listen on for HTTP requests.")
+	userOpt    = flag.String("user", "", "User")
 	filter     = flag.String("filter", "", "Commandline filter")
 	versionFlg = flag.Bool("version", false, "Show version number")
 	verboseFlg = flag.Bool("verbose", false, "verbose")
@@ -46,10 +49,13 @@ var (
 const namespace = "proc"
 
 type Exporter struct {
-	mutex       sync.RWMutex
+	mutex sync.RWMutex
+
+	uid         *uint32
 	filterRegex *regexp.Regexp
-	bootTime    float64
-	pagesize    int
+
+	bootTime float64
+	pagesize int
 
 	scrapeFailures prometheus.Counter
 
@@ -75,7 +81,25 @@ type Exporter struct {
 	rssGauge                   *prometheus.GaugeVec
 }
 
-func NewExporter(filter *string) (*Exporter, error) {
+func NewExporter(username *string, filter *string) (*Exporter, error) {
+	var uid *uint32 = nil
+	if *username != "" {
+		usr, err := user.Lookup(*username)
+		if err != nil {
+			return nil, err
+		}
+
+		tmpUid, err := strconv.ParseUint(usr.Uid, 10, 32)
+		if err != nil {
+			return nil, err
+		}
+		tmpUid32 := uint32(tmpUid)
+
+		uid = &tmpUid32
+
+		dbgf("User: %s UID: %d\n", *username, uid)
+	}
+
 	var filterRegex *regexp.Regexp = nil
 	if filter != nil {
 		log.Printf("Filter: %s\n", *filter)
@@ -94,6 +118,7 @@ func NewExporter(filter *string) (*Exporter, error) {
 	labelNames := []string{"pid", "comm", "cmdline"}
 
 	return &Exporter{
+		uid:         uid,
 		filterRegex: filterRegex,
 		bootTime:    float64(procStat.BootTime),
 		pagesize:    os.Getpagesize(),
@@ -279,6 +304,17 @@ func (e *Exporter) collect(ch chan<- prometheus.Metric) error {
 	}
 
 	for _, proc := range procs {
+		fi, err := os.Stat(fmt.Sprintf("/proc/%d/stat", proc.PID))
+		if err != nil {
+			dbg(err)
+			continue
+		}
+
+		uid := fi.Sys().(*syscall.Stat_t).Uid
+		if e.uid != nil && *e.uid != uid {
+			continue
+		}
+
 		stat, err := proc.NewStat()
 		if err != nil {
 			dbg(err)
@@ -386,7 +422,7 @@ func main() {
 		os.Exit(0)
 	}
 
-	exporter, err := NewExporter(filter)
+	exporter, err := NewExporter(userOpt, filter)
 	if err != nil {
 		log.Fatal(err)
 	}
