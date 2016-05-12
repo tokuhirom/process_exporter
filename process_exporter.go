@@ -392,6 +392,8 @@ func main() {
 	}
 	prometheus.MustRegister(exporter)
 
+	dbgf("Listen: %s, Pid: %d", *addr, os.Getpid())
+
 	// Expose the registered metrics via HTTP.
 	http.Handle("/metrics", prometheus.Handler())
 	log.Fatal(http.ListenAndServe(*addr, nil))
