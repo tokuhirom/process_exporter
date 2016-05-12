@@ -285,18 +285,18 @@ func (e *Exporter) collect(ch chan<- prometheus.Metric) error {
 			continue
 		}
 
+		if e.filterRegex != nil {
+			if !e.filterRegex.MatchString(stat.Comm) {
+				continue
+			}
+		}
+
 		cmdline, err := proc.CmdLine()
 		if err != nil {
 			log.Print(err)
 			continue
 		}
 		sCmdline := strings.Join(cmdline, " ")
-
-		if e.filterRegex != nil {
-			if !e.filterRegex.MatchString(sCmdline) {
-				continue
-			}
-		}
 
 		labels := []string{strconv.Itoa(proc.PID), stat.Comm, sCmdline}
 
