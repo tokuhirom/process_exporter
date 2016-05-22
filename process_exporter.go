@@ -3,7 +3,6 @@ package main
 import (
 	"flag"
 	"fmt"
-	"log"
 	"net/http"
 	"os"
 	"os/user"
@@ -14,6 +13,7 @@ import (
 	"syscall"
 
 	"github.com/prometheus/client_golang/prometheus"
+	"github.com/prometheus/common/log"
 	"github.com/prometheus/procfs"
 )
 
@@ -42,8 +42,8 @@ var (
 	addr       = flag.String("listen-address", ":9011", "The address to listen on for HTTP requests.")
 	userOpt    = flag.String("user", "", "User")
 	filter     = flag.String("filter", "", "Commandline filter")
+	procfsPath = flag.String("procfs", procfs.DefaultMountPoint, "procfs path")
 	versionFlg = flag.Bool("version", false, "Show version number")
-	verboseFlg = flag.Bool("verbose", false, "verbose")
 )
 
 const namespace = "proc"
@@ -56,6 +56,7 @@ type Exporter struct {
 
 	bootTime float64
 	pagesize int
+	fs       procfs.FS
 
 	scrapeFailures prometheus.Counter
 
@@ -81,7 +82,7 @@ type Exporter struct {
 	rssGauge                   *prometheus.GaugeVec
 }
 
-func NewExporter(username *string, filter *string) (*Exporter, error) {
+func NewExporter(username *string, filter *string, procfsPath string) (*Exporter, error) {
 	var uid *uint32 = nil
 	if *username != "" {
 		usr, err := user.Lookup(*username)
@@ -97,12 +98,12 @@ func NewExporter(username *string, filter *string) (*Exporter, error) {
 
 		uid = &tmpUid32
 
-		dbgf("User: %s UID: %d\n", *username, uid)
+		log.Info("User: %s UID: %d\n", *username, uid)
 	}
 
 	var filterRegex *regexp.Regexp = nil
 	if filter != nil {
-		log.Printf("Filter: %s\n", *filter)
+		log.Infof("Filter: %s", *filter)
 		re, err := regexp.Compile(*filter)
 		if err != nil {
 			log.Fatal(err)
@@ -110,7 +111,12 @@ func NewExporter(username *string, filter *string) (*Exporter, error) {
 		filterRegex = re
 	}
 
-	procStat, err := procfs.NewStat()
+	fs, err := procfs.NewFS(procfsPath)
+	if err != nil {
+		return nil, err
+	}
+
+	procStat, err := fs.NewStat()
 	if err != nil {
 		return nil, err
 	}
@@ -120,6 +126,7 @@ func NewExporter(username *string, filter *string) (*Exporter, error) {
 	return &Exporter{
 		uid:         uid,
 		filterRegex: filterRegex,
+		fs:          fs,
 		bootTime:    float64(procStat.BootTime),
 		pagesize:    os.Getpagesize(),
 		scrapeFailures: prometheus.NewCounter(prometheus.CounterOpts{
@@ -298,26 +305,28 @@ func (e *Exporter) Describe(ch chan<- *prometheus.Desc) {
 }
 
 func (e *Exporter) collect(ch chan<- prometheus.Metric) error {
-	procs, err := procfs.AllProcs()
+	procs, err := e.fs.AllProcs()
 	if err != nil {
 		return err
 	}
 
 	for _, proc := range procs {
-		fi, err := os.Stat(fmt.Sprintf("/proc/%d/stat", proc.PID))
-		if err != nil {
-			dbg(err)
-			continue
-		}
+		if e.uid != nil {
+			fi, err := os.Stat(e.fs.Path(fmt.Sprintf("/%d/stat", proc.PID)))
+			if err != nil {
+				log.Error(err)
+				continue
+			}
 
-		uid := fi.Sys().(*syscall.Stat_t).Uid
-		if e.uid != nil && *e.uid != uid {
-			continue
+			uid := fi.Sys().(*syscall.Stat_t).Uid
+			if e.uid != nil && *e.uid != uid {
+				continue
+			}
 		}
 
 		stat, err := proc.NewStat()
 		if err != nil {
-			dbg(err)
+			log.Info(err)
 			continue
 		}
 
@@ -329,7 +338,7 @@ func (e *Exporter) collect(ch chan<- prometheus.Metric) error {
 
 		cmdline, err := proc.CmdLine()
 		if err != nil {
-			log.Print(err)
+			log.Info(err)
 			continue
 		}
 		sCmdline := strings.Join(cmdline, " ")
@@ -338,7 +347,7 @@ func (e *Exporter) collect(ch chan<- prometheus.Metric) error {
 
 		io, err := proc.NewIO()
 		if err != nil {
-			dbg(err)
+			log.Info(err)
 		} else {
 			e.ioRCharGauge.WithLabelValues(labels...).Set(float64(io.RChar))
 			e.ioWCharGauge.WithLabelValues(labels...).Set(float64(io.WChar))
@@ -394,23 +403,11 @@ func (e *Exporter) Collect(ch chan<- prometheus.Metric) {
 	e.mutex.Lock() // To protect metrics from concurrent collects.
 	defer e.mutex.Unlock()
 	if err := e.collect(ch); err != nil {
-		dbgf("Error scraping apache: %s", err)
+		log.Infof("Error getting process info: %s", err)
 		e.scrapeFailures.Inc()
 		e.scrapeFailures.Collect(ch)
 	}
 	return
-}
-
-func dbg(a ...interface{}) {
-	if *verboseFlg {
-		log.Print(a...)
-	}
-}
-
-func dbgf(format string, v ...interface{}) {
-	if *verboseFlg {
-		log.Printf(format, v...)
-	}
 }
 
 func main() {
@@ -422,13 +419,13 @@ func main() {
 		os.Exit(0)
 	}
 
-	exporter, err := NewExporter(userOpt, filter)
+	exporter, err := NewExporter(userOpt, filter, *procfsPath)
 	if err != nil {
 		log.Fatal(err)
 	}
 	prometheus.MustRegister(exporter)
 
-	dbgf("Listen: %s, Pid: %d", *addr, os.Getpid())
+	log.Infof("Listen: %s, Pid: %d", *addr, os.Getpid())
 
 	// Expose the registered metrics via HTTP.
 	http.Handle("/metrics", prometheus.Handler())
